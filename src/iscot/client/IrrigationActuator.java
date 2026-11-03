@@ -10,29 +10,32 @@ import javax.swing.JPanel;
 import iscot.client.gui.ActionHistoryPanel;
 import iscot.client.gui.IrrigationIcon;
 import iscot.enums.Areas;
+import iscot.enums.Type;
 import iscot.events.AreaIrrigationOrderEvent;
 
 /**
  * Cliente Atuador: Irrigação / Sistema de Rega
  *
- * Argumentos: IP PORT AreaDispositivo [TipoDispositivo]
+ * Argumentos aceites:
+ *   java iscot.client.IrrigationActuator [Area]
+ *   java iscot.client.IrrigationActuator <IP> <PORT> <Area>
  * Exemplo: localhost 8080 Garden
  */
 public class IrrigationActuator {
 
-	public static void main(String[] args) throws IOException, InterruptedException {
-		if (args.length < 1) {
-			System.err.println("Argumentos insuficientes! Uso: <Area> ou <IP> <PORT> <Area>");
-			return;
-		}
+	public static void main(String[] args) {
+		String host = "localhost";
+		int port = 8080;
+		Areas area = Areas.Garden;
 
-		String areaStr = (args.length == 1) ? args[0] : (args.length >= 3 ? args[2] : args[0]);
-		Areas area;
-		try {
-			area = Areas.valueOf(areaStr);
-		} catch (IllegalArgumentException e) {
-			System.err.println("Área inválida: " + areaStr + ". Áreas válidas: Kitchen, WC, LivingRoom, BedRoom, Garden");
-			return;
+		if (args.length >= 3) {
+			host = args[0];
+			try {
+				port = Integer.parseInt(args[1]);
+			} catch (NumberFormatException ignored) {}
+			area = Areas.valueOf(args[2]);
+		} else if (args.length == 1) {
+			area = Areas.valueOf(args[0]);
 		}
 
 		JFrame janela = new JFrame("Irrigação - " + area);
@@ -46,11 +49,11 @@ public class IrrigationActuator {
 		painelPrincipal.add(irrigationIcon, BorderLayout.CENTER);
 		painelPrincipal.add(historyPanel, BorderLayout.SOUTH);
 
-		// Botão para simulação local de eventos da Fase 3
-		JButton btnSimular = new JButton("Simular Alternância Rega (Fase 3)");
+		final Areas finalArea = area;
+		JButton btnSimular = new JButton("Alternar Rega Manualmente");
 		btnSimular.addActionListener(e -> {
 			boolean novoEstado = !irrigationIcon.isAtiva();
-			AreaIrrigationOrderEvent eventoSimulado = new AreaIrrigationOrderEvent("decisor-simulado", area, novoEstado);
+			AreaIrrigationOrderEvent eventoSimulado = new AreaIrrigationOrderEvent("manual", finalArea, novoEstado);
 			processarOrdem(eventoSimulado, irrigationIcon, historyPanel);
 		});
 		painelPrincipal.add(btnSimular, BorderLayout.NORTH);
@@ -60,15 +63,26 @@ public class IrrigationActuator {
 		janela.pack();
 		janela.setVisible(true);
 
-		// Demonstração automática inicial da Fase 3
-		new Thread(() -> {
-			try {
-				Thread.sleep(2000);
-				processarOrdem(new AreaIrrigationOrderEvent("decisor-auto", area, true), irrigationIcon, historyPanel);
-				Thread.sleep(3000);
-				processarOrdem(new AreaIrrigationOrderEvent("decisor-auto", area, false), irrigationIcon, historyPanel);
-			} catch (InterruptedException ignored) {}
-		}).start();
+		// Conectar à rede com Connection
+		try {
+			Connection connection = new Connection(host, port, Type.ACTUATOR, area, event -> {
+				if (event instanceof AreaIrrigationOrderEvent) {
+					AreaIrrigationOrderEvent ordem = (AreaIrrigationOrderEvent) event;
+					processarOrdem(ordem, irrigationIcon, historyPanel);
+				}
+			});
+			connection.start();
+			janela.setTitle("Irrigação - " + area + " [" + connection.getAssignedDeviceId() + "]");
+
+			janela.addWindowListener(new java.awt.event.WindowAdapter() {
+				@Override
+				public void windowClosing(java.awt.event.WindowEvent e) {
+					connection.close();
+				}
+			});
+		} catch (Exception e) {
+			System.out.println("[IrrigationActuator] Servidor não disponível em " + host + ":" + port + " (" + e.getMessage() + "). Modo offline.");
+		}
 	}
 
 	public static void processarOrdem(AreaIrrigationOrderEvent evento, IrrigationIcon icon, ActionHistoryPanel history) {
@@ -76,6 +90,6 @@ public class IrrigationActuator {
 		icon.setAtiva(ligar);
 		String acao = ligar ? "Rega ativada" : "Rega desativada";
 		history.addAction(acao);
-		System.out.println("[Irrigação @" + evento.getArea() + "] Recebeu: " + evento + " -> " + acao);
+		System.out.println("[Irrigação @" + evento.getArea() + "] Processou ordem: " + acao);
 	}
 }

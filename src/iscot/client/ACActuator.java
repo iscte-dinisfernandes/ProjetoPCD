@@ -11,29 +11,32 @@ import iscot.client.gui.ACIcon;
 import iscot.client.gui.ActionHistoryPanel;
 import iscot.enums.AirConditioningMode;
 import iscot.enums.Areas;
+import iscot.enums.Type;
 import iscot.events.AreaTemperatureOrderEvent;
 
 /**
  * Cliente Atuador: Ar Condicionado
  *
- * Argumentos: IP PORT AreaDispositivo [TipoDispositivo]
+ * Argumentos aceites:
+ *   java iscot.client.ACActuator [Area]
+ *   java iscot.client.ACActuator <IP> <PORT> <Area>
  * Exemplo: localhost 8080 BedRoom
  */
 public class ACActuator {
 
-	public static void main(String[] args) throws IOException, InterruptedException {
-		if (args.length < 1) {
-			System.err.println("Argumentos insuficientes! Uso: <Area> ou <IP> <PORT> <Area>");
-			return;
-		}
+	public static void main(String[] args) {
+		String host = "localhost";
+		int port = 8080;
+		Areas area = Areas.BedRoom;
 
-		String areaStr = (args.length == 1) ? args[0] : (args.length >= 3 ? args[2] : args[0]);
-		Areas area;
-		try {
-			area = Areas.valueOf(areaStr);
-		} catch (IllegalArgumentException e) {
-			System.err.println("Área inválida: " + areaStr + ". Áreas válidas: Kitchen, WC, LivingRoom, BedRoom, Garden");
-			return;
+		if (args.length >= 3) {
+			host = args[0];
+			try {
+				port = Integer.parseInt(args[1]);
+			} catch (NumberFormatException ignored) {}
+			area = Areas.valueOf(args[2]);
+		} else if (args.length == 1) {
+			area = Areas.valueOf(args[0]);
 		}
 
 		JFrame janela = new JFrame("Ar Condicionado - " + area);
@@ -47,7 +50,6 @@ public class ACActuator {
 		painelPrincipal.add(acIcon, BorderLayout.CENTER);
 		painelPrincipal.add(historyPanel, BorderLayout.SOUTH);
 
-		// Array com os vários modos para alternar na simulação
 		AirConditioningMode[] modos = {
 			AirConditioningMode.Aquecimento,
 			AirConditioningMode.Frio,
@@ -55,12 +57,13 @@ public class ACActuator {
 			AirConditioningMode.Desligado
 		};
 		final int[] modoIndex = {0};
+		final Areas finalArea = area;
 
-		JButton btnSimular = new JButton("Simular Próximo Modo AC (Fase 3)");
+		JButton btnSimular = new JButton("Alternar Modo Manualmente");
 		btnSimular.addActionListener(e -> {
 			AirConditioningMode proximoModo = modos[modoIndex[0] % modos.length];
 			modoIndex[0]++;
-			AreaTemperatureOrderEvent eventoSimulado = new AreaTemperatureOrderEvent("decisor-simulado", area, proximoModo);
+			AreaTemperatureOrderEvent eventoSimulado = new AreaTemperatureOrderEvent("manual", finalArea, proximoModo);
 			processarOrdem(eventoSimulado, acIcon, historyPanel);
 		});
 		painelPrincipal.add(btnSimular, BorderLayout.NORTH);
@@ -70,17 +73,26 @@ public class ACActuator {
 		janela.pack();
 		janela.setVisible(true);
 
-		// Demonstração automática inicial da Fase 3
-		new Thread(() -> {
-			try {
-				Thread.sleep(2000);
-				processarOrdem(new AreaTemperatureOrderEvent("decisor-auto", area, AirConditioningMode.Frio), acIcon, historyPanel);
-				Thread.sleep(3000);
-				processarOrdem(new AreaTemperatureOrderEvent("decisor-auto", area, AirConditioningMode.Aquecimento), acIcon, historyPanel);
-				Thread.sleep(3000);
-				processarOrdem(new AreaTemperatureOrderEvent("decisor-auto", area, AirConditioningMode.Desligado), acIcon, historyPanel);
-			} catch (InterruptedException ignored) {}
-		}).start();
+		// Conectar à rede com Connection
+		try {
+			Connection connection = new Connection(host, port, Type.ACTUATOR, area, event -> {
+				if (event instanceof AreaTemperatureOrderEvent) {
+					AreaTemperatureOrderEvent ordem = (AreaTemperatureOrderEvent) event;
+					processarOrdem(ordem, acIcon, historyPanel);
+				}
+			});
+			connection.start();
+			janela.setTitle("Ar Condicionado - " + area + " [" + connection.getAssignedDeviceId() + "]");
+
+			janela.addWindowListener(new java.awt.event.WindowAdapter() {
+				@Override
+				public void windowClosing(java.awt.event.WindowEvent e) {
+					connection.close();
+				}
+			});
+		} catch (Exception e) {
+			System.out.println("[ACActuator] Servidor não disponível em " + host + ":" + port + " (" + e.getMessage() + "). Modo offline.");
+		}
 	}
 
 	public static void processarOrdem(AreaTemperatureOrderEvent evento, ACIcon icon, ActionHistoryPanel history) {
@@ -90,6 +102,6 @@ public class ACActuator {
 				? "Ar condicionado desligado"
 				: "Ar condicionado em modo " + modo;
 		history.addAction(acao);
-		System.out.println("[AC @" + evento.getArea() + "] Recebeu: " + evento + " -> " + acao);
+		System.out.println("[AC @" + evento.getArea() + "] Processou ordem: " + acao);
 	}
 }

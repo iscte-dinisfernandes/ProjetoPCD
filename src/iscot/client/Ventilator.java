@@ -10,30 +10,32 @@ import javax.swing.JPanel;
 import iscot.client.gui.ActionHistoryPanel;
 import iscot.client.gui.VentilatorIcon;
 import iscot.enums.Areas;
+import iscot.enums.Type;
 import iscot.events.AreaVentilationOrderEvent;
 
 /**
  * Cliente Atuador: Ventilador
  *
- * Argumentos: IP PORT AreaDispositivo [TipoDispositivo]
+ * Argumentos aceites:
+ *   java iscot.client.Ventilator [Area]
+ *   java iscot.client.Ventilator <IP> <PORT> <Area>
  * Exemplo: localhost 8080 LivingRoom
  */
 public class Ventilator {
 
-	public static void main(String[] args) throws IOException, InterruptedException {
-		if (args.length < 1) {
-			System.err.println("Argumentos insuficientes! Uso: <Area> ou <IP> <PORT> <Area>");
-			return;
-		}
+	public static void main(String[] args) {
+		String host = "localhost";
+		int port = 8080;
+		Areas area = Areas.LivingRoom;
 
-		// Permite passar apenas a Área para testes da Fase 3, ou os 3/4 argumentos padrão
-		String areaStr = (args.length == 1) ? args[0] : (args.length >= 3 ? args[2] : args[0]);
-		Areas area;
-		try {
-			area = Areas.valueOf(areaStr);
-		} catch (IllegalArgumentException e) {
-			System.err.println("Área inválida: " + areaStr + ". Áreas válidas: Kitchen, WC, LivingRoom, BedRoom, Garden");
-			return;
+		if (args.length >= 3) {
+			host = args[0];
+			try {
+				port = Integer.parseInt(args[1]);
+			} catch (NumberFormatException ignored) {}
+			area = Areas.valueOf(args[2]);
+		} else if (args.length == 1) {
+			area = Areas.valueOf(args[0]);
 		}
 
 		JFrame janela = new JFrame("Ventilador - " + area);
@@ -47,12 +49,11 @@ public class Ventilator {
 		painelPrincipal.add(ventilatorIcon, BorderLayout.CENTER);
 		painelPrincipal.add(historyPanel, BorderLayout.SOUTH);
 
-		// Botão para simulação local de eventos da Fase 3
-		JButton btnSimular = new JButton("Simular Alternância (Fase 3)");
+		final Areas finalArea = area;
+		JButton btnSimular = new JButton("Alternar Ventilador Manualmente");
 		btnSimular.addActionListener(e -> {
 			boolean novoEstado = !ventilatorIcon.isLigado();
-			// Simula a receção de um AreaVentilationOrderEvent
-			AreaVentilationOrderEvent eventoSimulado = new AreaVentilationOrderEvent("decisor-simulado", area, novoEstado);
+			AreaVentilationOrderEvent eventoSimulado = new AreaVentilationOrderEvent("manual", finalArea, novoEstado);
 			processarOrdem(eventoSimulado, ventilatorIcon, historyPanel);
 		});
 		painelPrincipal.add(btnSimular, BorderLayout.NORTH);
@@ -62,25 +63,33 @@ public class Ventilator {
 		janela.pack();
 		janela.setVisible(true);
 
-		// Demonstração automática inicial da Fase 3 após 2 segundos
-		new Thread(() -> {
-			try {
-				Thread.sleep(2000);
-				processarOrdem(new AreaVentilationOrderEvent("decisor-auto", area, true), ventilatorIcon, historyPanel);
-				Thread.sleep(3000);
-				processarOrdem(new AreaVentilationOrderEvent("decisor-auto", area, false), ventilatorIcon, historyPanel);
-			} catch (InterruptedException ignored) {}
-		}).start();
+		// Conectar à rede com Connection
+		try {
+			Connection connection = new Connection(host, port, Type.ACTUATOR, area, event -> {
+				if (event instanceof AreaVentilationOrderEvent) {
+					AreaVentilationOrderEvent ordem = (AreaVentilationOrderEvent) event;
+					processarOrdem(ordem, ventilatorIcon, historyPanel);
+				}
+			});
+			connection.start();
+			janela.setTitle("Ventilador - " + area + " [" + connection.getAssignedDeviceId() + "]");
+
+			janela.addWindowListener(new java.awt.event.WindowAdapter() {
+				@Override
+				public void windowClosing(java.awt.event.WindowEvent e) {
+					connection.close();
+				}
+			});
+		} catch (Exception e) {
+			System.out.println("[Ventilator] Servidor não disponível em " + host + ":" + port + " (" + e.getMessage() + "). Modo offline.");
+		}
 	}
 
-	/**
-	 * Processa o evento de ordem, atualiza o ícone e adiciona entrada no histórico.
-	 */
 	public static void processarOrdem(AreaVentilationOrderEvent evento, VentilatorIcon icon, ActionHistoryPanel history) {
 		boolean ligar = evento.isTurnOn();
 		icon.setLigado(ligar);
 		String acao = ligar ? "Ventilador ligado" : "Ventilador desligado";
 		history.addAction(acao);
-		System.out.println("[Ventilador @" + evento.getArea() + "] Recebeu: " + evento + " -> " + acao);
+		System.out.println("[Ventilador @" + evento.getArea() + "] Processou ordem: " + acao);
 	}
 }

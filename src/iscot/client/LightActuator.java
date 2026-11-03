@@ -10,29 +10,32 @@ import javax.swing.JPanel;
 import iscot.client.gui.ActionHistoryPanel;
 import iscot.client.gui.LightIcon;
 import iscot.enums.Areas;
+import iscot.enums.Type;
 import iscot.events.AreaLightingOrderEvent;
 
 /**
  * Cliente Atuador: Iluminação / Lâmpada
  *
- * Argumentos: IP PORT AreaDispositivo [TipoDispositivo]
+ * Argumentos aceites:
+ *   java iscot.client.LightActuator [Area]
+ *   java iscot.client.LightActuator <IP> <PORT> <Area>
  * Exemplo: localhost 8080 LivingRoom
  */
 public class LightActuator {
 
-	public static void main(String[] args) throws IOException, InterruptedException {
-		if (args.length < 1) {
-			System.err.println("Argumentos insuficientes! Uso: <Area> ou <IP> <PORT> <Area>");
-			return;
-		}
+	public static void main(String[] args) {
+		String host = "localhost";
+		int port = 8080;
+		Areas area = Areas.LivingRoom;
 
-		String areaStr = (args.length == 1) ? args[0] : (args.length >= 3 ? args[2] : args[0]);
-		Areas area;
-		try {
-			area = Areas.valueOf(areaStr);
-		} catch (IllegalArgumentException e) {
-			System.err.println("Área inválida: " + areaStr + ". Áreas válidas: Kitchen, WC, LivingRoom, BedRoom, Garden");
-			return;
+		if (args.length >= 3) {
+			host = args[0];
+			try {
+				port = Integer.parseInt(args[1]);
+			} catch (NumberFormatException ignored) {}
+			area = Areas.valueOf(args[2]);
+		} else if (args.length == 1) {
+			area = Areas.valueOf(args[0]);
 		}
 
 		JFrame janela = new JFrame("Iluminação - " + area);
@@ -46,11 +49,12 @@ public class LightActuator {
 		painelPrincipal.add(lightIcon, BorderLayout.CENTER);
 		painelPrincipal.add(historyPanel, BorderLayout.SOUTH);
 
-		// Botão para simulação local de eventos da Fase 3
-		JButton btnSimular = new JButton("Simular Alternância Lâmpada (Fase 3)");
+		// Botão para testes manuais
+		final Areas finalArea = area;
+		JButton btnSimular = new JButton("Alternar Lâmpada Manualmente");
 		btnSimular.addActionListener(e -> {
 			boolean novoEstado = !lightIcon.isLigada();
-			AreaLightingOrderEvent eventoSimulado = new AreaLightingOrderEvent("decisor-simulado", area, novoEstado);
+			AreaLightingOrderEvent eventoSimulado = new AreaLightingOrderEvent("manual", finalArea, novoEstado);
 			processarOrdem(eventoSimulado, lightIcon, historyPanel);
 		});
 		painelPrincipal.add(btnSimular, BorderLayout.NORTH);
@@ -60,15 +64,26 @@ public class LightActuator {
 		janela.pack();
 		janela.setVisible(true);
 
-		// Demonstração automática inicial da Fase 3 após 2 segundos
-		new Thread(() -> {
-			try {
-				Thread.sleep(2000);
-				processarOrdem(new AreaLightingOrderEvent("decisor-auto", area, true), lightIcon, historyPanel);
-				Thread.sleep(3000);
-				processarOrdem(new AreaLightingOrderEvent("decisor-auto", area, false), lightIcon, historyPanel);
-			} catch (InterruptedException ignored) {}
-		}).start();
+		// Conectar à rede com a classe Connection
+		try {
+			Connection connection = new Connection(host, port, Type.ACTUATOR, area, event -> {
+				if (event instanceof AreaLightingOrderEvent) {
+					AreaLightingOrderEvent ordem = (AreaLightingOrderEvent) event;
+					processarOrdem(ordem, lightIcon, historyPanel);
+				}
+			});
+			connection.start();
+			janela.setTitle("Iluminação - " + area + " [" + connection.getAssignedDeviceId() + "]");
+
+			janela.addWindowListener(new java.awt.event.WindowAdapter() {
+				@Override
+				public void windowClosing(java.awt.event.WindowEvent e) {
+					connection.close();
+				}
+			});
+		} catch (Exception e) {
+			System.out.println("[LightActuator] Servidor não disponível em " + host + ":" + port + " (" + e.getMessage() + "). Modo offline.");
+		}
 	}
 
 	public static void processarOrdem(AreaLightingOrderEvent evento, LightIcon icon, ActionHistoryPanel history) {
@@ -76,6 +91,6 @@ public class LightActuator {
 		icon.setLigada(ligar);
 		String acao = ligar ? "Lâmpada ligada" : "Lâmpada desligada";
 		history.addAction(acao);
-		System.out.println("[Lâmpada @" + evento.getArea() + "] Recebeu: " + evento + " -> " + acao);
+		System.out.println("[Lâmpada @" + evento.getArea() + "] Processou ordem: " + acao);
 	}
 }
